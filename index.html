@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EPIRef PDF 자료 목록</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            line-height: 1.6;
+            background-color: #f4f7f6;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 960px;
+            width: 100%;
+            margin: 40px 20px;
+            background: #ffffff;
+            padding: 30px 40px;
+            border-radius: 12px;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+            animation: fadeIn 0.8s ease-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        header {
+            text-align: center;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+            margin-bottom: 30px;
+        }
+        h1 {
+            color: #2c3e50;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+        p.subtitle {
+            font-size: 1.1em;
+            color: #7f8c8d;
+        }
+        .loading-message {
+            text-align: center;
+            font-style: italic;
+            color: #999;
+            margin-top: 50px;
+            font-size: 1.1em;
+        }
+        .error-message {
+            text-align: center;
+            color: #e74c3c;
+            font-weight: bold;
+            margin-top: 50px;
+            font-size: 1.1em;
+        }
+        .file-list-section {
+            margin-bottom: 30px;
+        }
+        h2 {
+            color: #3498db;
+            font-size: 1.8em;
+            border-bottom: 1px solid #e0e0e0;
+            padding-bottom: 8px;
+            margin-top: 30px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+        }
+        h2::before {
+            content: '📚'; /* Book icon */
+            margin-right: 10px;
+            font-size: 1.2em;
+        }
+        ul {
+            list-style-type: none;
+            padding: 0;
+            margin: 0;
+        }
+        li {
+            background-color: #ecf0f1;
+            margin-bottom: 10px;
+            padding: 12px 20px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            transition: background-color 0.3s ease;
+        }
+        li:hover {
+            background-color: #dbe4e6;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.08);
+        }
+        a {
+            text-decoration: none;
+            color: #2980b9;
+            font-weight: 600;
+            flex-grow: 1;
+            display: flex;
+            align-items: center;
+            font-size: 1.05em;
+        }
+        .file-icon {
+            margin-right: 12px;
+            color: #e74c3c; /* PDF icon color */
+            font-size: 1.5em;
+        }
+        .file-icon svg {
+            width: 20px;
+            height: 20px;
+            vertical-align: middle;
+        }
+        footer {
+            text-align: center;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #e0e0e0;
+            color: #7f8c8d;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>EPIRef 직업성 질환 역학조사 보고서</h1>
+            <p class="subtitle">직업성 질환 관련 역학조사 보고서 PDF 파일들을 찾아보실 수 있습니다.</p>
+        </header>
+        
+        <div id="pdf-list">
+            <p class="loading-message">PDF 파일 목록을 불러오는 중입니다...</p>
+        </div>
+
+        <footer>
+            <p>데이터는 <a href="https://github.com/jinhaslab/epiref" target="_blank">jinhaslab/epiref</a> GitHub 리포지토리에서 제공됩니다.</p>
+            <p>&copy; 2024. All rights reserved.</p>
+        </footer>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // 이 GitHub 리포지토리의 raw.githubusercontent.com 경로를 사용합니다.
+            const repoOwner = 'jinhaslab';
+            const repoName = 'epiref';
+            const branch = 'main'; // GitHub Pages가 배포되는 브랜치 (main 또는 master)
+            const pathToPdfs = 'docs'; // PDF 파일들이 직접 들어있는 폴더 (docs)
+
+            const githubApiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/contents/${pathToPdfs}`;
+            const githubPagesUrlBase = `https://${repoOwner}.github.io/${repoName}/${pathToPdfs}/`;
+
+            const pdfListDiv = document.getElementById('pdf-list');
+
+            fetch(githubApiUrl, {
+                headers: {
+                    'Accept': 'application/vnd.github.v3+json'
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`GitHub API 요청 실패: ${response.statusText}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                pdfListDiv.innerHTML = ''; // 로딩 메시지 제거
+
+                const pdfFiles = data.filter(item => item.type === 'file' && item.name.toLowerCase().endsWith('.pdf'));
+
+                if (pdfFiles.length === 0) {
+                    pdfListDiv.innerHTML = '<p class="loading-message">이 폴더에 PDF 파일이 없습니다.</p>';
+                    return;
+                }
+
+                let html = '<div class="file-list-section"><h2>모든 보고서</h2><ul>';
+                const fileIconSvg = `
+                    <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M14 2H6C4.89543 2 4 2.89543 4 4V20C4 21.1046 4.89543 22 6 22H18C19.1046 22 20 21.1046 20 20V8L14 2ZM18 20V9H13V4H6V20H18ZM13 15C13 14.4477 13.4477 14 14 14H16V16H14C13.4477 16 13 15.5523 13 15ZM14 17C14 16.4477 13.4477 16 13 16H8C7.44772 16 7 16.4477 7 17C7 17.5523 7.44772 18 8 18H13C13.4477 18 14 17.5523 14 17ZM14 12C14 11.4477 13.4477 11 13 11H8C7.44772 11 7 11.4477 7 12C7 12.5523 7.44772 13 8 13H13C13.4477 13 14 12.5523 14 12Z"/>
+                    </svg>`;
+
+                // 파일명을 기준으로 정렬 (알파벳 순서)
+                pdfFiles.sort((a, b) => a.name.localeCompare(b.name));
+
+                pdfFiles.forEach(file => {
+                    const fileUrl = `${githubPagesUrlBase}${file.name}`;
+                    html += `<li><span class="file-icon">${fileIconSvg}</span><a href="${fileUrl}" target="_blank">${file.name}</a></li>`;
+                });
+                html += `</ul></div>`;
+                pdfListDiv.innerHTML = html;
+            })
+            .catch(error => {
+                console.error('PDF 목록을 가져오는 중 오류 발생:', error);
+                pdfListDiv.innerHTML = `<p class="error-message">PDF 파일 목록을 불러오는 데 실패했습니다. GitHub API 접근 권한 또는 경로를 확인해주세요.</p>`;
+            });
+        });
+    </script>
+</body>
+</html>
