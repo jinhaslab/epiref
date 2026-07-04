@@ -1,132 +1,149 @@
 #!/usr/bin/env python3
-"""epiref docs/*_population.html, *_process.html 에서 구조화 정보를 뽑아
-docs/json/<fid>.json 으로 저장한다.
+"""ote 파이프라인이 미리 추출한 JSON 4종을 fid(파일명) 기준으로 병합해
+epiref/docs/json/<fid>.json 단일 파일로 저장한다.
+
+소스(기본값: scratchpad 스테이징 폴더):
+  kosha_final/<fid>.json                  -> summary   (메인 요약)
+  output/<year>/p..._제목.json            -> population(개인특성/노출인자)
+  output_exposure_basic/<year>/p...json   -> exposure  (노출 기존값, 단위 미포함)
+  output_working/<year>/p...json          -> process   (공정; *_sections.json 우선)
+
+공통키(foreign key)는 fid = koshaYYYY_PPP_QQQ (=파일명).
 
 사용법:
-  python3 build_json.py <fid>     # 한 건만 (예: kosha2000_003_004)
-  python3 build_json.py --all     # 전체
+  python3 build_json.py            # 기본 소스에서 전체 생성
+  python3 build_json.py <소스base> # 소스 base 지정
 """
-import sys
 import os
 import re
+import sys
 import json
-import html as htmllib
-from html.parser import HTMLParser
+import collections
 
-DOCS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs")
-JSON_DIR = os.path.join(DOCS, "json")
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT_DIR = os.path.join(HERE, "docs", "json")
+DEFAULT_SRC = ("/private/tmp/claude-502/-Users-kosha-kosha-server/"
+               "d5943573-6235-473a-a1ca-99429e3407f2/scratchpad/ote_stage")
 
-SECTIONS = ("population", "process", "exposure")  # exposure는 향후 대비
-
-
-class TableParser(HTMLParser):
-    """구분/내용 2열 테이블을 {구분: [값,...]} 으로 파싱.
-    rowspan 으로 병합된 key 는 여러 값을 리스트로 모은다."""
-
-    def __init__(self):
-        super().__init__()
-        self.in_tbody = False
-        self.in_td = False
-        self.cur_text = []
-        self.row_cells = []  # 현재 <tr> 안의 td 텍스트들
-        self.result = {}     # 순서 유지 dict
-        self.cur_key = None
-
-    def handle_starttag(self, tag, attrs):
-        if tag == "tbody":
-            self.in_tbody = True
-        elif tag == "tr" and self.in_tbody:
-            self.row_cells = []
-        elif tag == "td" and self.in_tbody:
-            self.in_td = True
-            self.cur_text = []
-
-    def handle_endtag(self, tag):
-        if tag == "tbody":
-            self.in_tbody = False
-        elif tag == "td" and self.in_td:
-            self.in_td = False
-            self.row_cells.append("".join(self.cur_text).strip())
-        elif tag == "tr" and self.in_tbody:
-            if len(self.row_cells) >= 2:
-                # 새 key + 첫 값
-                key, val = self.row_cells[0], self.row_cells[1]
-                self.cur_key = key
-                self.result.setdefault(key, []).append(val)
-            elif len(self.row_cells) == 1 and self.cur_key is not None:
-                # rowspan 이어지는 값
-                self.result[self.cur_key].append(self.row_cells[0])
-            self.row_cells = []
-
-    def handle_data(self, data):
-        if self.in_td:
-            self.cur_text.append(data)
+PDIR_FID = re.compile(r"^p(\d{4})_(\d+)_(\d+)_")          # output* 파일명 -> fid
+PDIR_TITLE = re.compile(r"^p\d{4}_\d+_\d+_[^_]*_\d+_(.*)\.json$")  # 제목 추출
 
 
-def parse_section(path):
+def load(path):
     with open(path, encoding="utf-8") as f:
-        p = TableParser()
-        p.feed(f.read())
-    # 빈 문자열 값 정리
-    return {k: [htmllib.unescape(v) for v in vs if v != ""] for k, vs in p.result.items()}
+        return json.load(f)
 
 
-def build_one(fid):
-    record = {"fid": fid}
-    m = re.match(r"kosha(\d{4})_", fid)
-    if m:
-        record["year"] = int(m.group(1))
-    found = False
-    for sec in SECTIONS:
-        path = os.path.join(DOCS, f"{fid}_{sec}.html")
-        if os.path.exists(path):
-            record[sec] = parse_section(path)
-            found = True
-    if not found:
-        return None
-    return record
+def fid_of(fn):
+    m = PDIR_FID.match(fn)
+    return f"kosha{m.group(1)}_{m.group(2)}_{m.group(3)}" if m else None
 
 
-def all_fids():
-    fids = set()
-    for name in os.listdir(DOCS):
-        m = re.match(r"(kosha\d{4}_\d+_\d+)_(population|process|exposure)\.html$", name)
-        if m:
-            fids.add(m.group(1))
-    return sorted(fids)
+def index_pdir(root, prefer_sections=False):
+    """output* 디렉토리를 {fid: (path, filename)} 로 인덱싱.
+    prefer_sections=True 면 같은 fid 에 *_sections.json 을 우선 채택.
+    titles_*.json 같은 비-fid 파일은 제외. 반환: (index, dup_fids)."""
+    cand = collections.defaultdict(list)
+    for dp, _, files in os.walk(root):
+        for fn in files:
+            if not fn.endswith(".json"):
+                continue
+            fid = fid_of(fn)
+            if not fid:                       # titles_pYYYY.json 등 제외
+                continue
+            cand[fid].append(os.path.join(dp, fn))
+    index, dups = {}, []
+    for fid, paths in cand.items():
+        if len(paths) > 1:
+            dups.append((fid, [os.path.basename(p) for p in paths]))
+        if prefer_sections:
+            sec = [p for p in paths if p.endswith("_sections.json")]
+            paths = sec or paths
+        index[fid] = sorted(paths)[0]         # 결정적으로 첫 번째 채택
+    return index, dups
 
 
-def write_json(record):
-    os.makedirs(JSON_DIR, exist_ok=True)
-    out = os.path.join(JSON_DIR, f"{record['fid']}.json")
-    with open(out, "w", encoding="utf-8") as f:
-        json.dump(record, f, ensure_ascii=False, indent=2)
-    return out
+def title_from_filename(path):
+    m = PDIR_TITLE.match(os.path.basename(path))
+    return m.group(1).strip() if m else None
 
 
 def main(argv):
-    if len(argv) < 2:
-        print(__doc__)
-        return 1
-    if argv[1] == "--all":
-        fids = all_fids()
-        n = 0
-        for fid in fids:
-            rec = build_one(fid)
-            if rec:
-                write_json(rec)
-                n += 1
-        print(f"{n}/{len(fids)} JSON 생성 → {JSON_DIR}")
-    else:
-        fid = argv[1]
-        rec = build_one(fid)
-        if rec is None:
-            print(f"해당 fid 의 html 이 없습니다: {fid}")
-            return 1
-        # 미리보기: 파일로 저장하고 내용도 출력
-        out = write_json(rec)
-        print(f"저장: {out}\n")
-        print(json.dumps(rec, ensure_ascii=False, indent=2))
+    src = argv[1] if len(argv) > 1 else DEFAULT_SRC
+    final_dir = os.path.join(src, "kosha_final")
+
+    final = {f[:-5]: os.path.join(final_dir, f)
+             for f in os.listdir(final_dir) if f.endswith(".json")}
+    pop, pop_dup = index_pdir(os.path.join(src, "output"))
+    exp, exp_dup = index_pdir(os.path.join(src, "output_exposure_basic"))
+    prc, prc_dup = index_pdir(os.path.join(src, "output_working"), prefer_sections=True)
+
+    all_fids = sorted(set(final) | set(pop) | set(exp) | set(prc))
+
+    os.makedirs(OUT_DIR, exist_ok=True)
+    counts = collections.Counter()
+    for fid in all_fids:
+        m = re.match(r"kosha(\d{4})_(\d+_\d+)$", fid)
+        rec = {"fid": fid}
+        if m:
+            rec["year"] = int(m.group(1))
+            rec["page"] = m.group(2)
+        title = None
+        if fid in final:
+            s = load(final[fid])
+            title = s.get("제목")
+            # 중복 메타는 최상위로 승격하고 summary 에서는 제거
+            for k in ("년도", "페이지", "파일명"):
+                s.pop(k, None)
+            rec["summary"] = s
+            counts["summary"] += 1
+        exp_data = load(exp[fid]) if fid in exp else None
+        if fid in pop:
+            population = load(pop[fid])
+            # 생년월일은 원래 exposure(output_exposure_basic)에만 있으나
+            # 인적 특성이라 population 에 포함시킨다(질병확진나이 뒤에 배치).
+            if exp_data and "생년월일" not in population and exp_data.get("생년월일"):
+                ordered_pop = {}
+                for k, v in population.items():
+                    ordered_pop[k] = v
+                    if k == "질병확진나이":
+                        ordered_pop["생년월일"] = exp_data["생년월일"]
+                if "생년월일" not in ordered_pop:      # 질병확진나이가 없으면 맨 뒤
+                    ordered_pop["생년월일"] = exp_data["생년월일"]
+                population = ordered_pop
+                counts["생년월일_주입"] += 1
+            rec["population"] = population
+            title = title or title_from_filename(pop[fid])
+            counts["population"] += 1
+        if exp_data is not None:
+            rec["exposure"] = exp_data
+            counts["exposure"] += 1
+        if fid in prc:
+            rec["process"] = load(prc[fid])
+            title = title or title_from_filename(prc[fid])
+            counts["process"] += 1
+        if title:
+            rec["title"] = title
+        # title 을 fid 다음 위치로 정렬해 가독성 확보
+        ordered = {}
+        for k in ("fid", "year", "page", "title",
+                  "summary", "population", "exposure", "process"):
+            if k in rec:
+                ordered[k] = rec[k]
+        with open(os.path.join(OUT_DIR, f"{fid}.json"), "w", encoding="utf-8") as f:
+            json.dump(ordered, f, ensure_ascii=False, indent=2)
+        counts["files"] += 1
+
+    print(f"생성 파일: {counts['files']}  ->  {OUT_DIR}")
+    print(f"  섹션 포함수: summary={counts['summary']} population={counts['population']} "
+          f"exposure={counts['exposure']} process={counts['process']}")
+    print(f"  전체 fid(합집합): {len(all_fids)}")
+    for name, dup in (("output", pop_dup), ("exposure_basic", exp_dup),
+                      ("working", prc_dup)):
+        if dup:
+            print(f"  [중복 fid] {name}: {len(dup)}건 (첫 파일 채택)")
+            for fid, files in dup[:3]:
+                print(f"      {fid}: {files}")
     return 0
 
 

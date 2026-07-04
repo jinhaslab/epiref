@@ -131,6 +131,79 @@
         color: #7f8c8d;
         font-size: 0.9em;
       }
+      /* JSON 섹션 전용 스타일 */
+      h2.json-heading::before {
+        content: "🗂️";
+      }
+      .section-desc {
+        color: #7f8c8d;
+        font-size: 0.95em;
+        margin: -8px 0 16px;
+      }
+      .toolbar {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+      }
+      .toolbar input[type="search"] {
+        flex: 1 1 240px;
+        padding: 10px 14px;
+        border: 1px solid #cfd8dc;
+        border-radius: 8px;
+        font-size: 1em;
+        outline: none;
+      }
+      .toolbar input[type="search"]:focus {
+        border-color: #3498db;
+        box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.15);
+      }
+      .count-badge {
+        color: #7f8c8d;
+        font-size: 0.9em;
+        white-space: nowrap;
+      }
+      .json-list {
+        max-height: 520px;
+        overflow-y: auto;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 8px;
+        background: #fafcfc;
+      }
+      .json-list ul {
+        margin: 0;
+      }
+      .json-list li {
+        justify-content: space-between;
+      }
+      .json-list li a.fid-link {
+        color: #2c3e50;
+        font-family: "SFMono-Regular", Consolas, monospace;
+        font-size: 0.98em;
+      }
+      .download-btn {
+        flex: 0 0 auto;
+        text-decoration: none;
+        background: #3498db;
+        color: #fff !important;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 0.9em;
+        font-weight: 600;
+        white-space: nowrap;
+        transition: background-color 0.2s ease;
+      }
+      .download-btn:hover {
+        background: #2980b9;
+      }
+      .no-match {
+        text-align: center;
+        color: #999;
+        font-style: italic;
+        padding: 20px;
+      }
     </style>
   </head>
   <body>
@@ -139,6 +212,21 @@
         <h1>EPIRef 직업성 질환 역학조사 보고서</h1>
         <p class="subtitle">직업성 질환 관련 역학조사 보고서 PDF 파일들을 찾아보실 수 있습니다.</p>
       </header>
+
+      <div id="json-section" class="file-list-section">
+        <h2 class="json-heading">구조화 JSON 데이터</h2>
+        <p class="section-desc">
+          각 보고서의 구조화 정보(<code>summary·population·exposure·process</code>)를 담은
+          JSON 파일입니다. 파일명(fid)은 PDF·HTML 원본과 1:1로 대응합니다.
+        </p>
+        <div class="toolbar">
+          <input type="search" id="json-search" placeholder="fid 검색 (예: kosha2000, 2013_047 …)" autocomplete="off" />
+          <span class="count-badge" id="json-count"></span>
+        </div>
+        <div class="json-list" id="json-list">
+          <p class="loading-message">JSON 파일 목록을 불러오는 중입니다...</p>
+        </div>
+      </div>
 
       <div id="pdf-list">
         <p class="loading-message">PDF 파일 목록을 불러오는 중입니다...</p>
@@ -152,59 +240,118 @@
 
     <script>
       document.addEventListener("DOMContentLoaded", function () {
-        // 이 GitHub 리포지토리의 raw.githubusercontent.com 경로를 사용합니다.
         const repoOwner = "jinhaslab";
         const repoName = "epiref";
-        const branch = "main"; // GitHub Pages가 배포되는 브랜치 (main 또는 master)
-        const pathToPdfs = "docs"; // PDF 파일들이 직접 들어있는 폴더 (docs)
+        const branch = "main"; // GitHub Pages가 배포되는 브랜치
+        const pathToPdfs = "docs"; // PDF/JSON 이 들어있는 폴더
 
-        const githubApiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/contents/${pathToPdfs}`;
-        //const githubPagesUrlBase = `https://${repoOwner}.github.io/${repoName}/${pathToPdfs}/`;//
-        const githubPagesUrlBase = `https://${repoOwner}.github.io/${repoName}/`;
+        const apiHeaders = { Accept: "application/vnd.github.v3+json" };
+        const contentsUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/contents/${pathToPdfs}`;
+        const treeUrl = (sha) => `https://api.github.com/repos/${repoOwner}/${repoName}/git/trees/${sha}`;
+        const pagesBase = `https://${repoOwner}.github.io/${repoName}/`;
 
         const pdfListDiv = document.getElementById("pdf-list");
+        const jsonListDiv = document.getElementById("json-list");
+        const jsonCountEl = document.getElementById("json-count");
+        const jsonSearchEl = document.getElementById("json-search");
 
-        fetch(githubApiUrl, {
-          headers: {
-            Accept: "application/vnd.github.v3+json",
-          },
-        })
-          .then((response) => {
-            if (!response.ok) {
-              throw new Error(`GitHub API 요청 실패: ${response.statusText}`);
-            }
-            return response.json();
-          })
-          .then((data) => {
-            pdfListDiv.innerHTML = ""; // 로딩 메시지 제거
+        const fileIconSvg = `
+              <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M14 2H6C4.89543 2 4 2.89543 4 4V20C4 21.1046 4.89543 22 6 22H18C19.1046 22 20 21.1046 20 20V8L14 2ZM18 20V9H13V4H6V20H18ZM13 15C13 14.4477 13.4477 14 14 14H16V16H14C13.4477 16 13 15.5523 13 15ZM14 17C14 16.4477 13.4477 16 13 16H8C7.44772 16 7 16.4477 7 17C7 17.5523 7.44772 18 8 18H13C13.4477 18 14 17.5523 14 17ZM14 12C14 11.4477 13.4477 11 13 11H8C7.44772 11 7 11.4477 7 12C7 12.5523 7.44772 13 8 13H13C13.4477 13 14 12.5523 14 12Z"/>
+              </svg>`;
 
-            const pdfFiles = data.filter((item) => item.type === "file" && item.name.toLowerCase().endsWith(".pdf"));
-
-            if (pdfFiles.length === 0) {
-              pdfListDiv.innerHTML = '<p class="loading-message">이 폴더에 PDF 파일이 없습니다.</p>';
-              return;
-            }
-
-            let html = '<div class="file-list-section"><h2>모든 보고서</h2><ul>';
-            const fileIconSvg = `
-                    <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M14 2H6C4.89543 2 4 2.89543 4 4V20C4 21.1046 4.89543 22 6 22H18C19.1046 22 20 21.1046 20 20V8L14 2ZM18 20V9H13V4H6V20H18ZM13 15C13 14.4477 13.4477 14 14 14H16V16H14C13.4477 16 13 15.5523 13 15ZM14 17C14 16.4477 13.4477 16 13 16H8C7.44772 16 7 16.4477 7 17C7 17.5523 7.44772 18 8 18H13C13.4477 18 14 17.5523 14 17ZM14 12C14 11.4477 13.4477 11 13 11H8C7.44772 11 7 11.4477 7 12C7 12.5523 7.44772 13 8 13H13C13.4477 13 14 12.5523 14 12Z"/>
-                    </svg>`;
-
-            // 파일명을 기준으로 정렬 (알파벳 순서)
-            pdfFiles.sort((a, b) => a.name.localeCompare(b.name));
-
-            pdfFiles.forEach((file) => {
-              const fileUrl = `${githubPagesUrlBase}${file.name}`;
-              html += `<li><span class="file-icon">${fileIconSvg}</span><a href="${fileUrl}" target="_blank">${file.name}</a></li>`;
-            });
-            html += `</ul></div>`;
-            pdfListDiv.innerHTML = html;
-          })
-          .catch((error) => {
-            console.error("PDF 목록을 가져오는 중 오류 발생:", error);
-            pdfListDiv.innerHTML = `<p class="error-message">PDF 파일 목록을 불러오는 데 실패했습니다. GitHub API 접근 권한 또는 경로를 확인해주세요.</p>`;
+        function renderPdfs(items) {
+          const pdfFiles = items.filter((it) => it.type === "file" && it.name.toLowerCase().endsWith(".pdf"));
+          if (pdfFiles.length === 0) {
+            pdfListDiv.innerHTML = '<p class="loading-message">이 폴더에 PDF 파일이 없습니다.</p>';
+            return;
+          }
+          pdfFiles.sort((a, b) => a.name.localeCompare(b.name));
+          let html = `<h2>모든 보고서 (PDF, ${pdfFiles.length}개)</h2><ul>`;
+          pdfFiles.forEach((file) => {
+            const url = `${pagesBase}${file.name}`;
+            html += `<li><span class="file-icon">${fileIconSvg}</span><a href="${url}" target="_blank">${file.name}</a></li>`;
           });
+          html += "</ul>";
+          pdfListDiv.className = "file-list-section";
+          pdfListDiv.innerHTML = html;
+        }
+
+        // JSON 파일 목록 렌더링 + 검색 필터 (다운로드 링크 포함)
+        function renderJson(names) {
+          names.sort((a, b) => a.localeCompare(b));
+          if (names.length === 0) {
+            jsonListDiv.innerHTML = '<p class="no-match">JSON 파일이 없습니다.</p>';
+            return;
+          }
+          const ul = document.createElement("ul");
+          const rows = names.map((name) => {
+            const fid = name.replace(/\.json$/i, "");
+            const url = `${pagesBase}json/${name}`;
+            const li = document.createElement("li");
+            li.dataset.fid = fid.toLowerCase();
+            li.innerHTML =
+              `<a class="fid-link" href="${url}" target="_blank">${fid}</a>` +
+              `<a class="download-btn" href="${url}" download="${name}">⬇ 다운로드</a>`;
+            ul.appendChild(li);
+            return li;
+          });
+          jsonListDiv.innerHTML = "";
+          jsonListDiv.appendChild(ul);
+
+          const updateCount = (visible) =>
+            (jsonCountEl.textContent = `총 ${names.length}개` + (visible !== names.length ? ` (표시 ${visible}개)` : ""));
+          updateCount(names.length);
+
+          jsonSearchEl.addEventListener("input", function () {
+            const q = this.value.trim().toLowerCase();
+            let visible = 0;
+            rows.forEach((li) => {
+              const match = !q || li.dataset.fid.indexOf(q) !== -1;
+              li.style.display = match ? "" : "none";
+              if (match) visible++;
+            });
+            updateCount(visible);
+            const existing = jsonListDiv.querySelector(".no-match");
+            if (visible === 0 && !existing) {
+              const p = document.createElement("p");
+              p.className = "no-match";
+              p.textContent = "검색 결과가 없습니다.";
+              jsonListDiv.appendChild(p);
+            } else if (visible > 0 && existing) {
+              existing.remove();
+            }
+          });
+        }
+
+        async function init() {
+          // 1) docs 폴더 내용 → PDF 목록 + json 폴더 SHA
+          const res = await fetch(contentsUrl, { headers: apiHeaders });
+          if (!res.ok) throw new Error(`GitHub API 요청 실패: ${res.statusText}`);
+          const items = await res.json();
+          renderPdfs(items);
+
+          // 2) json 폴더는 파일이 1000개를 넘어 Contents API 로는 잘리므로 Trees API 사용
+          const jsonDir = items.find((it) => it.type === "dir" && it.name === "json");
+          if (!jsonDir) {
+            jsonListDiv.innerHTML = '<p class="no-match">json 폴더를 찾을 수 없습니다.</p>';
+            return;
+          }
+          const tres = await fetch(treeUrl(jsonDir.sha), { headers: apiHeaders });
+          if (!tres.ok) throw new Error(`GitHub Trees API 요청 실패: ${tres.statusText}`);
+          const tree = await tres.json();
+          const names = (tree.tree || [])
+            .filter((t) => t.type === "blob" && /\.json$/i.test(t.path))
+            .map((t) => t.path);
+          renderJson(names);
+        }
+
+        init().catch((error) => {
+          console.error("목록을 가져오는 중 오류 발생:", error);
+          const msg = `<p class="error-message">목록을 불러오지 못했습니다. GitHub API 접근 또는 경로를 확인해주세요. (${error.message})</p>`;
+          if (jsonListDiv.querySelector(".loading-message")) jsonListDiv.innerHTML = msg;
+          if (pdfListDiv.querySelector(".loading-message")) pdfListDiv.innerHTML = msg;
+        });
       });
     </script>
   </body>
