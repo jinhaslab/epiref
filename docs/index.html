@@ -228,6 +228,21 @@
         </div>
       </div>
 
+      <div id="exposure-section" class="file-list-section">
+        <h2 class="json-heading">노출정보 HTML</h2>
+        <p class="section-desc">
+          각 보고서의 유해물질 노출정보(<code>측정값·작업환경·보호구·노출기간</code>)를 담은
+          HTML 페이지입니다. 파일명(fid)은 PDF·JSON과 1:1로 대응합니다.
+        </p>
+        <div class="toolbar">
+          <input type="search" id="exposure-search" placeholder="fid 검색 (예: kosha2010, 2013_047 …)" autocomplete="off" />
+          <span class="count-badge" id="exposure-count"></span>
+        </div>
+        <div class="json-list" id="exposure-list">
+          <p class="loading-message">노출정보 목록을 불러오는 중입니다...</p>
+        </div>
+      </div>
+
       <div id="pdf-list">
         <p class="loading-message">PDF 파일 목록을 불러오는 중입니다...</p>
       </div>
@@ -254,6 +269,9 @@
         const jsonListDiv = document.getElementById("json-list");
         const jsonCountEl = document.getElementById("json-count");
         const jsonSearchEl = document.getElementById("json-search");
+        const exposureListDiv = document.getElementById("exposure-list");
+        const exposureCountEl = document.getElementById("exposure-count");
+        const exposureSearchEl = document.getElementById("exposure-search");
 
         const fileIconSvg = `
               <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
@@ -324,6 +342,52 @@
           });
         }
 
+        // 노출정보 HTML 목록 렌더링 + 검색 필터
+        function renderExposure(paths) {
+          const names = paths.map((p) => p.split("/").pop());
+          names.sort((a, b) => a.localeCompare(b));
+          if (names.length === 0) {
+            exposureListDiv.innerHTML = '<p class="no-match">노출정보 HTML이 없습니다.</p>';
+            return;
+          }
+          const ul = document.createElement("ul");
+          const rows = names.map((name) => {
+            const fid = name.replace(/_exposure\.html$/i, "");
+            const url = `${pagesBase}${name}`;
+            const li = document.createElement("li");
+            li.dataset.fid = fid.toLowerCase();
+            li.innerHTML = `<a class="fid-link" href="${url}" target="_blank">${fid}</a>`;
+            ul.appendChild(li);
+            return li;
+          });
+          exposureListDiv.innerHTML = "";
+          exposureListDiv.appendChild(ul);
+
+          const updateCount = (visible) =>
+            (exposureCountEl.textContent = `총 ${names.length}개` + (visible !== names.length ? ` (표시 ${visible}개)` : ""));
+          updateCount(names.length);
+
+          exposureSearchEl.addEventListener("input", function () {
+            const q = this.value.trim().toLowerCase();
+            let visible = 0;
+            rows.forEach((li) => {
+              const match = !q || li.dataset.fid.indexOf(q) !== -1;
+              li.style.display = match ? "" : "none";
+              if (match) visible++;
+            });
+            updateCount(visible);
+            const existing = exposureListDiv.querySelector(".no-match");
+            if (visible === 0 && !existing) {
+              const p = document.createElement("p");
+              p.className = "no-match";
+              p.textContent = "검색 결과가 없습니다.";
+              exposureListDiv.appendChild(p);
+            } else if (visible > 0 && existing) {
+              existing.remove();
+            }
+          });
+        }
+
         async function init() {
           // 1) docs 폴더 내용 → PDF 목록 + json 폴더 SHA
           const res = await fetch(contentsUrl, { headers: apiHeaders });
@@ -344,6 +408,25 @@
             .filter((t) => t.type === "blob" && /\.json$/i.test(t.path))
             .map((t) => t.path);
           renderJson(names);
+
+          // 3) 노출정보 HTML 조각 목록 → docs 트리에서 *_exposure.html 필터
+          //    (docs 폴더는 파일이 많아 Contents API 로는 잘리므로 Trees API 사용)
+          try {
+            const rootRes = await fetch(treeUrl(branch), { headers: apiHeaders });
+            const root = await rootRes.json();
+            const docsEntry = (root.tree || []).find((t) => t.type === "tree" && t.path === pathToPdfs);
+            if (docsEntry) {
+              const dRes = await fetch(treeUrl(docsEntry.sha), { headers: apiHeaders });
+              const dTree = await dRes.json();
+              const expo = (dTree.tree || [])
+                .filter((t) => t.type === "blob" && /_exposure\.html$/i.test(t.path))
+                .map((t) => t.path);
+              renderExposure(expo);
+            }
+          } catch (e) {
+            console.error("노출정보 목록 로드 실패:", e);
+            exposureListDiv.innerHTML = '<p class="no-match">노출정보 목록을 불러오지 못했습니다.</p>';
+          }
         }
 
         init().catch((error) => {
