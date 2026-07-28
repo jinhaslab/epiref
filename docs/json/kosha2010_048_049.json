@@ -69,24 +69,36 @@
   "exposure_detail": {
     "측정값": [
       {
+        "측정시기": "불명",
+        "측정시작": "",
+        "측정종료": "",
         "물질": "Ethylene oxide",
         "농도": "",
         "단위": "",
         "원문인용": "작업환경측정결과 Ethylene oxide, 2-Ethoxyethanol, 1,3-Butadinel은 불검출이며 Formaldehyde는 0.003-0.004ppm으로 노출되었다."
       },
       {
+        "측정시기": "불명",
+        "측정시작": "",
+        "측정종료": "",
         "물질": "2-Ethoxyethanol",
         "농도": "",
         "단위": "",
         "원문인용": "작업환경측정결과 Ethylene oxide, 2-Ethoxyethanol, 1,3-Butadinel은 불검출이며 Formaldehyde는 0.003-0.004ppm으로 노출되었다."
       },
       {
+        "측정시기": "불명",
+        "측정시작": "",
+        "측정종료": "",
         "물질": "1,3-Butadinel",
         "농도": "",
         "단위": "",
         "원문인용": "작업환경측정결과 Ethylene oxide, 2-Ethoxyethanol, 1,3-Butadinel은 불검출이며 Formaldehyde는 0.003-0.004ppm으로 노출되었다."
       },
       {
+        "측정시기": "불명",
+        "측정시작": "",
+        "측정종료": "",
         "물질": "Formaldehyde",
         "농도": "0.003-0.004",
         "단위": "ppm",
